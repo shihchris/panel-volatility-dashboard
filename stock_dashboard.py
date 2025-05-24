@@ -103,7 +103,7 @@ model_files = {
     "LSTM Model": "data/LSTM/LSTM_pred_true_records.csv",
     "AREWMA Model": "data/AREWMA_Model/predictions.csv",
     "LSTM+GARCH Hybrid Model": "data/Hybrid_Model/hybrid_predictions.csv",
-    "EGARCH Model": "data/EGARCH/test_garch_predicted.csv",
+    "EGARCH Model": "data/EGARCH/EGARCH_pred_true_records.csv",
     "XGBoost Model": "data/XGBoost_Model/XGBoost_predictions.csv", 
 }
 
@@ -111,10 +111,10 @@ metrics_files = {
     "LSTM Model": "data/LSTM/LSTM_new_weekly_metrics.csv",
     "AREWMA Model": "data/AREWMA_Model/metrics.csv",
     "LSTM+GARCH Hybrid Model": "data/Hybrid_Model/hybrid_metrics.csv",
-    "EGARCH Model": "data/EGARCH/egarch_metrics.csv",
+    "EGARCH Model": "data/EGARCH/EGARCH_new_weekly_metrics.csv",
     "XGBoost Model": "data/XGBoost_Model/XGBoost_metrics.csv",
 }
-
+mapping_file = "data/EGARCH/stock_week_cluster_mapping.csv"
 # 改进的错误处理
 def safe_read_csv(filepath, model_name):
     """安全读取CSV文件，包含详细错误信息"""
@@ -134,8 +134,10 @@ def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
         return pd.DataFrame()
     
     df_copy = df.copy()
+    
 
     try:
+        
         if model == "AREWMA Model":
             df_copy = df_copy.rename(columns={"actual_volatility": "true", "ar_ewma_prediction": "pred", "time_seconds": "_time_tmp"})
             if not all(col in df_copy.columns for col in ["stock_id", "week", "_time_tmp"]):
@@ -146,27 +148,17 @@ def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
 
         elif model == "EGARCH Model":
             df_copy = df_copy.rename(columns={"realized_volatility": "true", "predicted_volatility": "pred"})
-
-            if "date" not in df_copy.columns and ("week" not in df_copy.columns or "bucket_start" not in df_copy.columns):
-                raise ValueError(f"Missing required columns for {model}")
-
-            if "date" in df_copy.columns:
-                if not all(col in df_copy.columns for col in ["stock_id", "date", "bucket_start"]):
-                    raise ValueError(f"Missing required columns for {model}")
-                df_copy = df_copy.sort_values(["stock_id", "date", "bucket_start"])
-                df_copy["bucket"] = df_copy.groupby(["stock_id", "date"]).cumcount()
-                if "week" not in df_copy.columns:
-                    try:
-                        df_copy["week"] = pd.to_datetime(df_copy["date"]).dt.isocalendar().week.astype(int)
-                    except Exception:
-                        df_copy["week"] = 0
-            else:
-                if not all(col in df_copy.columns for col in ["stock_id", "week", "bucket_start"]):
-                    raise ValueError(f"Missing required columns for {model}")
-                df_copy = df_copy.sort_values(["stock_id", "week", "bucket_start"])
+            if "time" in df_copy.columns and "week" in df_copy.columns and "stock_id" in df_copy.columns:
+                df_copy = df_copy.sort_values(["stock_id", "week", "time"])
                 df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+            elif "bucket" not in df_copy.columns:
+                if "week" in df_copy.columns and "stock_id" in df_copy.columns:
+                    df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+                elif "stock_id" in df_copy.columns:
+                    df_copy["bucket"] = df_copy.groupby("stock_id").cumcount()
+                else:
+                    raise ValueError(f"Missing required columns for {model}")
 
-            df_copy["cluster"] = df_copy.get("cluster", None)
 
         elif model == "LSTM+GARCH Hybrid Model":
             df_copy = df_copy.rename(columns={"actual": "true", "pred_hybrid": "pred", "time": "_time_tmp", "stock": "stock_id"})
@@ -217,15 +209,42 @@ def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
         if missing:
             raise ValueError(f"Missing final required columns for {model}: {missing}")
 
+        # 从CSV文件读取cluster映射信息
+        cluster_mapping_path = "data/EGARCH/stock_week_cluster_mapping.csv"
+        try:
+            import os
+            if os.path.exists(cluster_mapping_path):
+                cluster_df = pd.read_csv(cluster_mapping_path)
+                
+                # 标准化cluster_df中的数据类型以匹配df_copy
+                cluster_df["stock_id"] = cluster_df["stock_id"].apply(lambda x: str(int(float(str(x)))))
+                cluster_df["week"] = cluster_df["week"].astype(int)
+                
+                # 合并数据获取cluster信息
+                df_copy = df_copy.merge(
+                    cluster_df[["stock_id", "week", "cluster"]], 
+                    on=["stock_id", "week"], 
+                    how="left"
+                )
+                
+                print(f"Successfully loaded cluster mapping from {cluster_mapping_path}")
+            else:
+                print(f"Warning: Cluster mapping file not found at {cluster_mapping_path}")
+                df_copy["cluster"] = None
+                
+        except Exception as e:
+            print(f"Error loading cluster mapping: {str(e)}")
+            df_copy["cluster"] = None
+
+        # 如果cluster列仍然不存在，设置为None
         if "cluster" not in df_copy.columns:
             df_copy["cluster"] = None
 
         return df_copy[list(required) + ["cluster"]]
-        
+    
     except Exception as e:
         print(f"Error standardizing {model}: {str(e)}")
         return pd.DataFrame()
-
 # 加载模型数据
 model_dfs = {}
 successfully_loaded_models = []
