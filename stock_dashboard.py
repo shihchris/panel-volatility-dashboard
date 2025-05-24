@@ -2,11 +2,18 @@ import pandas as pd
 import panel as pn
 import hvplot.pandas
 from holoviews import opts
+import os
+from pathlib import Path
 
+# 云部署配置
 pn.extension("tabulator")
 pn.config.sizing_mode = "stretch_width"
 pn.extension(css_files=["https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"])
 
+# 获取端口（云平台会设置环境变量）
+PORT = int(os.environ.get("PORT", 5007))
+
+# CSS样式（保持原有样式）
 css = """
 body {
     font-family: 'Roboto', sans-serif;
@@ -87,132 +94,164 @@ body {
 """
 pn.extension(raw_css=[css])
 
+# 设置相对路径 - 适配云环境
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "data"
+
+# 更新文件路径为相对路径
 model_files = {
-    "LSTM Model": "LSTM/LSTM_pred_true_records.csv",
-    "AREWMA Model": "AREWMA_Model/predictions.csv",
-    "LSTM+GARCH Hybrid Model": "Hybrid_Model/hybrid_predictions.csv",
-    "EGARCH Model": "EGARCH/test_garch_predicted.csv",
-    "XGBoost Model": "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/XGBoost_Model/XGBoost_predictions.csv", 
+    "LSTM Model": "data/LSTM/LSTM_pred_true_records.csv",
+    "AREWMA Model": "data/AREWMA_Model/predictions.csv",
+    "LSTM+GARCH Hybrid Model": "data/Hybrid_Model/hybrid_predictions.csv",
+    "EGARCH Model": "data/EGARCH/test_garch_predicted.csv",
+    "XGBoost Model": "data/XGBoost_Model/XGBoost_predictions.csv", 
 }
 
 metrics_files = {
-    "LSTM Model": "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/LSTM/LSTM_new_weekly_metrics.csv",
-    "AREWMA Model": "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/AREWMA_Model/metrics.csv",
-    "LSTM+GARCH Hybrid Model": "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/Hybrid_Model/hybrid_metrics.csv",
-    "EGARCH Model": "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/EGARCH/egarch_metrics.csv",
-    "XGBoost Model": "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/XGBoost_Model/XGBoost_metrics.csv",
+    "LSTM Model": "data/LSTM/LSTM_new_weekly_metrics.csv",
+    "AREWMA Model": "data/AREWMA_Model/metrics.csv",
+    "LSTM+GARCH Hybrid Model": "data/Hybrid_Model/hybrid_metrics.csv",
+    "EGARCH Model": "data/EGARCH/egarch_metrics.csv",
+    "XGBoost Model": "data/XGBoost_Model/XGBoost_metrics.csv",
 }
 
+# 改进的错误处理
+def safe_read_csv(filepath, model_name):
+    """安全读取CSV文件，包含详细错误信息"""
+    try:
+        if os.path.exists(filepath):
+            return pd.read_csv(filepath)
+        else:
+            print(f"Warning: File not found for {model_name}: {filepath}")
+            return None
+    except Exception as e:
+        print(f"Error loading {model_name}: {str(e)}")
+        return None
+
 def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
+    """标准化数据框结构"""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
     df_copy = df.copy()
 
-    if model == "AREWMA Model":
-        df_copy = df_copy.rename(columns={"actual_volatility": "true", "ar_ewma_prediction": "pred", "time_seconds": "_time_tmp"})
-        if not all(col in df_copy.columns for col in ["stock_id", "week", "_time_tmp"]):
-            raise ValueError()
-        df_copy = df_copy.sort_values(["stock_id", "week", "_time_tmp"])
-        df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
-        df_copy = df_copy.drop(columns=["_time_tmp"])
+    try:
+        if model == "AREWMA Model":
+            df_copy = df_copy.rename(columns={"actual_volatility": "true", "ar_ewma_prediction": "pred", "time_seconds": "_time_tmp"})
+            if not all(col in df_copy.columns for col in ["stock_id", "week", "_time_tmp"]):
+                raise ValueError(f"Missing required columns for {model}")
+            df_copy = df_copy.sort_values(["stock_id", "week", "_time_tmp"])
+            df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+            df_copy = df_copy.drop(columns=["_time_tmp"])
 
-    elif model == "EGARCH Model":
-        df_copy = df_copy.rename(columns={"realized_volatility": "true", "predicted_volatility": "pred"})
+        elif model == "EGARCH Model":
+            df_copy = df_copy.rename(columns={"realized_volatility": "true", "predicted_volatility": "pred"})
 
-        if "date" not in df_copy.columns and ("week" not in df_copy.columns or "bucket_start" not in df_copy.columns):
-            raise ValueError()
+            if "date" not in df_copy.columns and ("week" not in df_copy.columns or "bucket_start" not in df_copy.columns):
+                raise ValueError(f"Missing required columns for {model}")
 
-        if "date" in df_copy.columns:
-            if not all(col in df_copy.columns for col in ["stock_id", "date", "bucket_start"]):
-                raise ValueError()
-            df_copy = df_copy.sort_values(["stock_id", "date", "bucket_start"])
-            df_copy["bucket"] = df_copy.groupby(["stock_id", "date"]).cumcount()
-            if "week" not in df_copy.columns:
-                try:
-                    df_copy["week"] = pd.to_datetime(df_copy["date"]).dt.isocalendar().week.astype(int)
-                except Exception:
-                    print("1")
-                    df_copy["week"] = 0
+            if "date" in df_copy.columns:
+                if not all(col in df_copy.columns for col in ["stock_id", "date", "bucket_start"]):
+                    raise ValueError(f"Missing required columns for {model}")
+                df_copy = df_copy.sort_values(["stock_id", "date", "bucket_start"])
+                df_copy["bucket"] = df_copy.groupby(["stock_id", "date"]).cumcount()
+                if "week" not in df_copy.columns:
+                    try:
+                        df_copy["week"] = pd.to_datetime(df_copy["date"]).dt.isocalendar().week.astype(int)
+                    except Exception:
+                        df_copy["week"] = 0
+            else:
+                if not all(col in df_copy.columns for col in ["stock_id", "week", "bucket_start"]):
+                    raise ValueError(f"Missing required columns for {model}")
+                df_copy = df_copy.sort_values(["stock_id", "week", "bucket_start"])
+                df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+
+            df_copy["cluster"] = df_copy.get("cluster", None)
+
+        elif model == "LSTM+GARCH Hybrid Model":
+            df_copy = df_copy.rename(columns={"actual": "true", "pred_hybrid": "pred", "time": "_time_tmp", "stock": "stock_id"})
+            if not all(col in df_copy.columns for col in ["stock_id", "week", "_time_tmp"]):
+                raise ValueError(f"Missing required columns for {model}")
+            df_copy = df_copy.sort_values(["stock_id", "week", "_time_tmp"])
+            df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+            df_copy = df_copy.drop(columns=["_time_tmp"])
+
+        elif model == "LSTM Model":
+            df_copy = df_copy.rename(columns={"true_value": "true", "predicted_value": "pred"})
+            if "time" in df_copy.columns and "week" in df_copy.columns and "stock_id" in df_copy.columns:
+                df_copy = df_copy.sort_values(["stock_id", "week", "time"])
+                df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+            elif "bucket" not in df_copy.columns:
+                if "week" in df_copy.columns and "stock_id" in df_copy.columns:
+                    df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+                elif "stock_id" in df_copy.columns:
+                    df_copy["bucket"] = df_copy.groupby("stock_id").cumcount()
+                else:
+                    raise ValueError(f"Missing required columns for {model}")
+                    
+        elif model == "XGBoost Model":
+            df_copy = df_copy.rename(columns={"stock": "stock_id", "actual": "true"})
+            if "time" in df_copy.columns and "week" in df_copy.columns and "stock_id" in df_copy.columns:
+                df_copy = df_copy.sort_values(["stock_id", "week", "time"])
+                df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+            elif "bucket" not in df_copy.columns:
+                if "week" in df_copy.columns and "stock_id" in df_copy.columns:
+                    df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+                elif "stock_id" in df_copy.columns:
+                    df_copy["bucket"] = df_copy.groupby("stock_id").cumcount()
+                else:
+                    raise ValueError(f"Missing required columns for {model}")
+            if "stock_id" not in df_copy.columns:
+                raise ValueError(f"Missing stock_id column for {model}")
+
+        # 标准化数据类型
+        df_copy["stock_id"] = df_copy["stock_id"].apply(lambda x: str(int(float(str(x)))))
+        if "week" in df_copy.columns:
+            df_copy["week"] = df_copy["week"].astype(int)
         else:
-            if not all(col in df_copy.columns for col in ["stock_id", "week", "bucket_start"]):
-                raise ValueError()
-            df_copy = df_copy.sort_values(["stock_id", "week", "bucket_start"])
-            df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
+            df_copy["week"] = 0
 
-        df_copy["cluster"] = df_copy.get("cluster", None)
+        # 检查必需列
+        required = {"stock_id", "week", "bucket", "true", "pred"}
+        missing = required - set(df_copy.columns)
+        if missing:
+            raise ValueError(f"Missing final required columns for {model}: {missing}")
 
-    elif model == "LSTM+GARCH Hybrid Model":
-        df_copy = df_copy.rename(columns={"actual": "true", "pred_hybrid": "pred", "time": "_time_tmp", "stock": "stock_id"})
-        if not all(col in df_copy.columns for col in ["stock_id", "week", "_time_tmp"]):
-            raise ValueError()
-        df_copy = df_copy.sort_values(["stock_id", "week", "_time_tmp"])
-        df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
-        df_copy = df_copy.drop(columns=["_time_tmp"])
+        if "cluster" not in df_copy.columns:
+            df_copy["cluster"] = None
 
-    elif model == "LSTM Model":
-        df_copy = df_copy.rename(columns={"true_value": "true", "predicted_value": "pred"})
-        if "time" in df_copy.columns and "week" in df_copy.columns and "stock_id" in df_copy.columns:
-            df_copy = df_copy.sort_values(["stock_id", "week", "time"])
-            df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
-        elif "bucket" not in df_copy.columns:
-            if "week" in df_copy.columns and "stock_id" in df_copy.columns:
-                print("2")
-                df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
-            elif "stock_id" in df_copy.columns:
-                print("3")
-                df_copy["bucket"] = df_copy.groupby("stock_id").cumcount()
-            else:
-                raise ValueError()
-    elif model == "XGBoost Model":
-        df_copy = df_copy.rename(columns={"stock": "stock_id", "actual": "true"})
-        if "time" in df_copy.columns and "week" in df_copy.columns and "stock_id" in df_copy.columns:
-            df_copy = df_copy.sort_values(["stock_id", "week", "time"])
-            df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
-        elif "bucket" not in df_copy.columns:
-            if "week" in df_copy.columns and "stock_id" in df_copy.columns:
-                df_copy["bucket"] = df_copy.groupby(["stock_id", "week"]).cumcount()
-            elif "stock_id" in df_copy.columns:
-                df_copy["bucket"] = df_copy.groupby("stock_id").cumcount()
-            else:
-                raise ValueError()
-        if "stock_id" not in df_copy.columns:
-            raise ValueError()
+        return df_copy[list(required) + ["cluster"]]
+        
+    except Exception as e:
+        print(f"Error standardizing {model}: {str(e)}")
+        return pd.DataFrame()
 
-    df_copy["stock_id"] = df_copy["stock_id"].apply(lambda x: str(int(float(str(x)))))
-    if "week" in df_copy.columns:
-        df_copy["week"] = df_copy["week"].astype(int)
-    else:
-        df_copy["week"] = 0
-
-    required = {"stock_id", "week", "bucket", "true", "pred"}
-    missing = required - set(df_copy.columns)
-    if missing:
-        raise ValueError()
-
-    if "cluster" not in df_copy.columns:
-        df_copy["cluster"] = None
-
-    return df_copy[list(required) + ["cluster"]]
-
+# 加载模型数据
 model_dfs = {}
 successfully_loaded_models = []
 
+print("Loading model data...")
 for model, path in model_files.items():
-    try:
-        raw = pd.read_csv(path)
-        std = standardize_df(raw, model)
-        std["model"] = model
-        model_dfs[model] = std
-        successfully_loaded_models.append(model)
-    except FileNotFoundError:
-        print("4")
-    except ValueError:
-        print("5")
-    except Exception:
-        print("6")
+    print(f"Attempting to load {model} from {path}")
+    raw_df = safe_read_csv(path, model)
+    if raw_df is not None:
+        std_df = standardize_df(raw_df, model)
+        if not std_df.empty:
+            std_df["model"] = model
+            model_dfs[model] = std_df
+            successfully_loaded_models.append(model)
+            print(f"✓ Successfully loaded {model}")
+        else:
+            print(f"✗ Failed to standardize {model}")
+    else:
+        print(f"✗ Failed to load {model}")
 
-
+# 处理数据合并逻辑（保持原有逻辑）
 if not model_dfs:
     full_df = pd.DataFrame(columns=["stock_id", "week", "bucket", "true", "pred", "cluster", "model"])
+    print("Warning: No model data loaded!")
 else:
+    print(f"Loaded {len(model_dfs)} models successfully")
     if len(model_dfs) > 1:
         valid_dfs_for_intersection = [
             df for df in model_dfs.values() 
@@ -250,9 +289,14 @@ else:
     else:
         full_df = pd.DataFrame(columns=["stock_id", "week", "bucket", "true", "pred", "cluster", "model"])
 
+# 设置选择器选项
 unique_stocks = sorted(full_df["stock_id"].unique()) if not full_df.empty and "stock_id" in full_df.columns else []
 model_options = successfully_loaded_models if successfully_loaded_models else ["No available model"]
 
+print(f"Available stocks: {len(unique_stocks)}")
+print(f"Available models: {model_options}")
+
+# 创建UI组件
 model_select = pn.widgets.Select(
     name="Model", 
     options=model_options, 
@@ -291,6 +335,7 @@ def update_weeks(stock, model):
         week_select.options = []
         week_select.value = None
 
+# 初始化week选择器
 if unique_stocks:
     update_weeks(stock_select.value, model_select.value)
 elif not full_df.empty and "stock_id" in full_df.columns and "model" in full_df.columns:
@@ -311,24 +356,20 @@ def make_plot(model, stock, week):
     try:
         week_int = int(week)
     except (ValueError, TypeError):
-        print("7")
-        return
+        return pn.pane.HTML("<div class='card'><p>Invalid week selection</p></div>")
 
     if full_df.empty or not ({'model', 'stock_id', 'week', 'bucket', 'true', 'pred'}.issubset(full_df.columns)):
-        print("8")
-        return
+        return pn.pane.HTML("<div class='card'><p>No data available</p></div>")
 
     df_slice = full_df[
         (full_df.model == model) & (full_df.stock_id == stock) & (full_df.week == week_int)
     ]
     if df_slice.empty:
-        print("9")
-        return
+        return pn.pane.HTML(f"<div class='card'><p>No data for {model}, Stock {stock}, Week {week_int}</p></div>")
 
     y_cols = [c for c in ["true", "pred"] if df_slice[c].notna().any()]
     if not y_cols:
-        print("10")
-        return
+        return pn.pane.HTML("<div class='card'><p>No valid prediction data</p></div>")
 
     opts.defaults(
         opts.Curve(
@@ -396,44 +437,52 @@ def make_plot(model, stock, week):
         pn.pane.HoloViews(plot, sizing_mode="stretch_width"),
         css_classes=['card']
     )
+
+# 加载metrics数据 - 保持原有逻辑
 metrics_df_list = []
 for name, path in metrics_files.items():
     try:
-        dfm = pd.read_csv(path)
-        if name == "AREWMA Model":
-            for col in dfm.columns:
-                if dfm[col].astype(str).str.contains('AR-EWMA').any():
-                    dfm = dfm[dfm[col] == 'AR-EWMA']
-                    break
-        if name == "XGBoost Model":
-            if 'model' in dfm.columns:
-                dfm = dfm[dfm['model'] == 'XGB']
-        dfm["model"] = name
-        if 'stock_id' in dfm.columns and 'stock' not in dfm.columns:
-            dfm['stock'] = dfm['stock_id']
-        metrics_df_list.append(dfm)
-    except Exception:
-        print("11")
+        dfm = safe_read_csv(path, name)
+        if dfm is not None and not dfm.empty:
+            if name == "AREWMA Model":
+                for col in dfm.columns:
+                    if dfm[col].astype(str).str.contains('AR-EWMA').any():
+                        dfm = dfm[dfm[col] == 'AR-EWMA']
+                        break
+            if name == "XGBoost Model":
+                if 'model' in dfm.columns:
+                    dfm = dfm[dfm['model'] == 'XGB']
+            dfm["model"] = name
+            if 'stock_id' in dfm.columns and 'stock' not in dfm.columns:
+                dfm['stock'] = dfm['stock_id']
+            metrics_df_list.append(dfm)
+    except Exception as e:
+        print(f"Error loading metrics for {name}: {str(e)}")
 
 all_metrics_df = pd.concat(metrics_df_list, ignore_index=True) if metrics_df_list else pd.DataFrame()
 
-aaa = "/Users/shiyuchen/Downloads/DATA3888_Optiver_9_GroupCode/EGARCH/stock_week_cluster_mapping.csv"
+# 加载mapping数据 - 修改为相对路径
+mapping_file = "data/EGARCH/stock_week_cluster_mapping.csv"
 try:
-    map_df = pd.read_csv(aaa)
-    if 'stock_id' in map_df.columns:
-        map_df["stock"] = map_df["stock_id"].astype(int)
-    elif 'stock' in map_df.columns:
-        map_df["stock"] = map_df["stock"].astype(int)
+    map_df = safe_read_csv(mapping_file, "Cluster Mapping")
+    if map_df is not None and not map_df.empty:
+        if 'stock_id' in map_df.columns:
+            map_df["stock"] = map_df["stock_id"].astype(int)
+        elif 'stock' in map_df.columns:
+            map_df["stock"] = map_df["stock"].astype(int)
+        else:
+            raise ValueError("No stock column found")
+        map_df["week"] = map_df["week"].astype(int)
+        if "cluster" not in map_df.columns:
+            raise ValueError("No cluster column found")
+        clusters = sorted(map_df["cluster"].unique())
+        if not clusters:
+            clusters = [0]
+        print("✓ Successfully loaded cluster mapping")
     else:
-        raise ValueError()
-    map_df["week"] = map_df["week"].astype(int)
-    if "cluster" not in map_df.columns:
-        raise ValueError()
-    clusters = sorted(map_df["cluster"].unique())
-    if not clusters:
-        clusters = [0]
-except Exception:
-    print("12")
+        raise ValueError("Empty mapping file")
+except Exception as e:
+    print(f"Warning: Failed to load cluster mapping: {str(e)}")
     map_df = pd.DataFrame(columns=["stock", "week", "cluster"])
     clusters = [0]
 
@@ -471,27 +520,22 @@ def _generate_metrics_display_content(model, cluster_val):
         )
 
     if all_metrics_df.empty or map_df.empty:
-        print("13")
-        return
+        return pn.pane.HTML("<div class='card'><p>No metrics or mapping data available</p></div>")
 
     try:
         cluster_int = int(cluster_val)
     except (ValueError, TypeError):
-        print("14")
-        return
+        return pn.pane.HTML("<div class='card'><p>Invalid cluster selection</p></div>")
 
     if not ({'stock', 'week', 'cluster'}.issubset(map_df.columns)):
-        print("15")
-        return
+        return pn.pane.HTML("<div class='card'><p>Invalid mapping data structure</p></div>")
         
     sel = map_df[map_df.cluster == cluster_int]
     if sel.empty:
-        print("16")
-        return
+        return pn.pane.HTML(f"<div class='card'><p>No data for cluster {cluster_int}</p></div>")
 
     if not ({'stock', 'week', 'model'}.issubset(all_metrics_df.columns)):
-        print("17")
-        return
+        return pn.pane.HTML("<div class='card'><p>Invalid metrics data structure</p></div>")
 
     pairs = set(zip(sel.stock, sel.week))
     
@@ -501,8 +545,7 @@ def _generate_metrics_display_content(model, cluster_val):
     ]
 
     if dfm.empty:
-        print("18")
-        return
+        return pn.pane.HTML(f"<div class='card'><p>No metrics data for {model} in cluster {cluster_int}</p></div>")
 
     metric_cols = ["R2", "RMSE", "MAE", "MedAE", "MAPE(%)", "SMAPE(%)", "QLIKE"]
     plots = []
@@ -538,8 +581,7 @@ def _generate_metrics_display_content(model, cluster_val):
             plots.append(p_obj)
 
     if not plots:
-        print("19")
-        return
+        return pn.pane.HTML("<div class='card'><p>No valid metrics to display</p></div>")
 
     rows = []
     if len(plots) >= 4:
@@ -624,11 +666,12 @@ def update_metrics_display_area(model, cluster):
     content = _generate_metrics_display_content(model, cluster)
     metrics_display_area.objects = [content]
 
+# 创建页面布局
 header = pn.pane.HTML(
     """
     <div class='header'>
         <h2>Financial Volatility Forecast Dashboard</h2>
-        <p>Predictive Analytics for Market Volatility</p>
+        <p>Predictive Analytics for Market Volatility - Cloud Deployed</p>
     </div>
     """,
     sizing_mode="stretch_width",
@@ -677,10 +720,10 @@ update_metrics_display_area(metrics_model_sel.value, metrics_cluster_sel.value)
 tabs.active = 0
 
 footer = pn.pane.HTML(
-    """
+    f"""
     <div style="text-align:center; margin-top:20px; padding:15px; background:#f5f5f5; border-radius:8px;">
         <p style="color:#7f8c8d; margin:0;">
-            Financial Volatility Analysis Dashboard • Developed with Panel & HoloViews
+            Financial Volatility Analysis Dashboard • Running on Port {PORT} • Cloud Deployed ☁️
         </p>
     </div>
     """,
@@ -688,4 +731,34 @@ footer = pn.pane.HTML(
 )
 
 layout.append(footer)
+
+def create_app():
+    """创建Panel应用"""
+    return layout
+
+# 使应用可服务
 layout.servable()
+
+# 本地运行时的入口点
+if __name__ == "__main__":
+    print(f"Starting Panel server on port {PORT}")
+    print(f"Loaded models: {successfully_loaded_models}")
+    print(f"Available clusters: {metrics_cluster_options}")
+    
+    # 确定允许的来源
+    allowed_origins = [f"localhost:{PORT}"]
+    
+    # 如果在云环境中，添加云域名
+    if "RAILWAY_STATIC_URL" in os.environ:
+        allowed_origins.append(os.environ["RAILWAY_STATIC_URL"])
+    elif "RENDER_EXTERNAL_HOSTNAME" in os.environ:
+        allowed_origins.append(os.environ["RENDER_EXTERNAL_HOSTNAME"])
+    
+    pn.serve(
+        layout,
+        port=PORT,
+        allow_websocket_origin=allowed_origins,
+        show=True,
+        title="Financial Volatility Forecast Dashboard",
+        autoreload=False
+    )
