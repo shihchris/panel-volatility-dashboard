@@ -5,15 +5,14 @@ from holoviews import opts
 import os
 from pathlib import Path
 
-# 云部署配置
+
 pn.extension("tabulator")
 pn.config.sizing_mode = "stretch_width"
 pn.extension(css_files=["https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"])
 
-# 获取端口（云平台会设置环境变量）
 PORT = int(os.environ.get("PORT", 5007))
 
-# CSS样式（保持原有样式）
+
 css = """
 body {
     font-family: 'Roboto', sans-serif;
@@ -94,11 +93,11 @@ body {
 """
 pn.extension(raw_css=[css])
 
-# 设置相对路径 - 适配云环境
+
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
-# 更新文件路径为相对路径
+
 model_files = {
     "LSTM Model": "data/LSTM/LSTM_pred_true_records.csv",
     "AREWMA Model": "data/AREWMA_Model/predictions.csv",
@@ -115,7 +114,6 @@ metrics_files = {
     "XGBoost Model": "data/XGBoost_Model/XGBoost_metrics.csv",
 }
 
-# 改进的错误处理
 def safe_read_csv(filepath, model_name):
     """安全读取CSV文件，包含详细错误信息"""
     try:
@@ -666,12 +664,12 @@ def update_metrics_display_area(model, cluster):
     content = _generate_metrics_display_content(model, cluster)
     metrics_display_area.objects = [content]
 
-# 创建页面布局
+
 header = pn.pane.HTML(
     """
     <div class='header'>
         <h2>Financial Volatility Forecast Dashboard</h2>
-        <p>Predictive Analytics for Market Volatility - Cloud Deployed</p>
+        <p>Predictive Analytics for Market Volatility</p>
     </div>
     """,
     sizing_mode="stretch_width",
