@@ -3,8 +3,8 @@
 A cloud-deployed dashboard for forecasting financial market volatility.
 
 ## Access
-- Online: https://name.railway.app
-- Local: `python app.py`
+- Online: https://web-production-cf7a0.up.railway.app/stock_dashboard
+- Local: `stock_dashboard.py`
 
 ## Features
 - Multi-model prediction comparison
