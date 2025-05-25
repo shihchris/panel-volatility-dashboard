@@ -709,7 +709,7 @@ header = pn.pane.HTML(
     """
     <div class='header'>
         <h2>Financial Volatility Forecast Dashboard</h2>
-        <p>Predictive Analytics for Market Volatility - Cloud Deployed</p>
+        <p>Predictive Analytics for Market Volatility</p>
     </div>
     """,
     sizing_mode="stretch_width",
