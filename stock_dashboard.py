@@ -264,6 +264,8 @@ for model, path in model_files.items():
             print(f"✗ Failed to standardize {model}")
     else:
         print(f"✗ Failed to load {model}")
+preferred_order = ["XGBoost Model", "LSTM Model", "EGARCH Model", "AREWMA Model", "LSTM+GARCH Hybrid Model"]
+successfully_loaded_models = [m for m in preferred_order if m in successfully_loaded_models]
 
 # 处理数据合并逻辑（保持原有逻辑）
 if not model_dfs:
