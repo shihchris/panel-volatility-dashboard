@@ -875,11 +875,13 @@ dashboard_description = pn.pane.HTML(
         <ul>
             <li><strong>Forecast Chart</strong> - Compare predicted vs. actual volatility values</li>
             <li><strong>Model Metrics</strong> - Analyze performance metrics by stock clusters</li>
+            <li><strong>Model Performance Comparison</strong> - Compare different models within the same cluster-week to evaluate relative accuracy</li>
         </ul>
     </div>
     """,
     sizing_mode="stretch_width"
 )
+
 
 layout_items = [header]
 if alert_pane:
