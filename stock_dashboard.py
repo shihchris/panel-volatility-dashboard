@@ -5,15 +5,15 @@ from holoviews import opts
 import os
 from pathlib import Path
 
-# 云部署配置
+
 pn.extension("tabulator")
 pn.config.sizing_mode = "stretch_width"
 pn.extension(css_files=["https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"])
 
-# 获取端口（云平台会设置环境变量）
+
 PORT = int(os.environ.get("PORT", 5007))
 
-# CSS样式（保持原有样式）
+
 css = """
 body {
     font-family: 'Roboto', sans-serif;
@@ -94,11 +94,11 @@ body {
 """
 pn.extension(raw_css=[css])
 
-# 设置相对路径 - 适配云环境
+
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
-# 更新文件路径为相对路径
+
 model_files = {
     "LSTM Model": "data/LSTM/LSTM_pred_true_records.csv",
     "AREWMA Model": "data/AREWMA_Model/predictions.csv",
@@ -115,9 +115,9 @@ metrics_files = {
     "XGBoost Model": "data/XGBoost_Model/XGB_weekly_metrics.csv",
 }
 mapping_file = "data/EGARCH/stock_week_cluster_mapping.csv"
-# 改进的错误处理
+
 def safe_read_csv(filepath, model_name):
-    """安全读取CSV文件，包含详细错误信息"""
+
     try:
         if os.path.exists(filepath):
             return pd.read_csv(filepath)
@@ -129,7 +129,7 @@ def safe_read_csv(filepath, model_name):
         return None
 
 def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
-    """标准化数据框结构"""
+
     if df is None or df.empty:
         return pd.DataFrame()
     
@@ -196,31 +196,30 @@ def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
             if "stock_id" not in df_copy.columns:
                 raise ValueError(f"Missing stock_id column for {model}")
 
-        # 标准化数据类型
+
         df_copy["stock_id"] = df_copy["stock_id"].apply(lambda x: str(int(float(str(x)))))
         if "week" in df_copy.columns:
             df_copy["week"] = df_copy["week"].astype(int)
         else:
             df_copy["week"] = 0
 
-        # 检查必需列
+
         required = {"stock_id", "week", "bucket", "true", "pred"}
         missing = required - set(df_copy.columns)
         if missing:
             raise ValueError(f"Missing final required columns for {model}: {missing}")
 
-        # 从CSV文件读取cluster映射信息
+
         cluster_mapping_path = "data/EGARCH/stock_week_cluster_mapping.csv"
         try:
             import os
             if os.path.exists(cluster_mapping_path):
                 cluster_df = pd.read_csv(cluster_mapping_path)
                 
-                # 标准化cluster_df中的数据类型以匹配df_copy
+
                 cluster_df["stock_id"] = cluster_df["stock_id"].apply(lambda x: str(int(float(str(x)))))
                 cluster_df["week"] = cluster_df["week"].astype(int)
-                
-                # 合并数据获取cluster信息
+
                 df_copy = df_copy.merge(
                     cluster_df[["stock_id", "week", "cluster"]], 
                     on=["stock_id", "week"], 
@@ -236,7 +235,6 @@ def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
             print(f"Error loading cluster mapping: {str(e)}")
             df_copy["cluster"] = None
 
-        # 如果cluster列仍然不存在，设置为None
         if "cluster" not in df_copy.columns:
             df_copy["cluster"] = None
 
@@ -245,7 +243,7 @@ def standardize_df(df: pd.DataFrame, model: str) -> pd.DataFrame:
     except Exception as e:
         print(f"Error standardizing {model}: {str(e)}")
         return pd.DataFrame()
-# 加载模型数据
+
 model_dfs = {}
 successfully_loaded_models = []
 
@@ -265,7 +263,7 @@ for model, path in model_files.items():
     else:
         print(f"✗ Failed to load {model}")
 
-# 处理数据合并逻辑（保持原有逻辑）
+
 if not model_dfs:
     full_df = pd.DataFrame(columns=["stock_id", "week", "bucket", "true", "pred", "cluster", "model"])
     print("Warning: No model data loaded!")
@@ -308,14 +306,14 @@ else:
     else:
         full_df = pd.DataFrame(columns=["stock_id", "week", "bucket", "true", "pred", "cluster", "model"])
 
-# 设置选择器选项
+
 unique_stocks = sorted(full_df["stock_id"].unique()) if not full_df.empty and "stock_id" in full_df.columns else []
 model_options = successfully_loaded_models if successfully_loaded_models else ["No available model"]
 
 print(f"Available stocks: {len(unique_stocks)}")
 print(f"Available models: {model_options}")
 
-# 创建UI组件
+
 model_select = pn.widgets.Select(
     name="Model", 
     options=model_options, 
@@ -354,7 +352,7 @@ def update_weeks(stock, model):
         week_select.options = []
         week_select.value = None
 
-# 初始化week选择器
+
 if unique_stocks:
     update_weeks(stock_select.value, model_select.value)
 elif not full_df.empty and "stock_id" in full_df.columns and "model" in full_df.columns:
@@ -476,7 +474,7 @@ def make_plot(model, stock, week):
         css_classes=['card']
     )
 
-# 加载metrics数据 - 保持原有逻辑
+
 metrics_df_list = []
 for name, path in metrics_files.items():
     try:
@@ -501,7 +499,7 @@ for name, path in metrics_files.items():
 
 all_metrics_df = pd.concat(metrics_df_list, ignore_index=True) if metrics_df_list else pd.DataFrame()
 
-# 加载mapping数据 - 修改为相对路径
+
 mapping_file = "data/EGARCH/stock_week_cluster_mapping.csv"
 try:
     map_df = safe_read_csv(mapping_file, "Cluster Mapping")
@@ -706,7 +704,7 @@ def update_metrics_display_area(model, cluster):
     content = _generate_metrics_display_content(model, cluster)
     metrics_display_area.objects = [content]
 
-# 创建页面布局
+
 header = pn.pane.HTML(
     """
     <div class='header'>
@@ -732,7 +730,7 @@ comparison_metric_select = pn.widgets.Select(
     css_classes=['select-widget']
 )
 
-# 添加 cluster selector
+
 comparison_cluster_select = pn.widgets.Select(
     name="Select Cluster",
     options=["All"] + [str(c) for c in metrics_cluster_options],  # 加入“All”
@@ -758,11 +756,11 @@ def create_comparison_plot(metric, cluster):
             """
         )
     
-    # 收集所有模型的数据
+
     plot_data = []
     available_models = []
     
-    # 获取所选 cluster 的 stock-week 对
+
     if cluster == "All":
         valid_pairs = set(zip(all_metrics_df['stock'], all_metrics_df['week']))
     else:
@@ -791,12 +789,12 @@ def create_comparison_plot(metric, cluster):
         model_data = all_metrics_df[all_metrics_df['model'] == model_name]
         
         if not model_data.empty and metric in model_data.columns:
-            # 按 cluster 筛选 stock-week 对
+
             model_data = model_data[model_data[["stock", "week"]].apply(tuple, axis=1).isin(valid_pairs)]
             valid_data = model_data[model_data[metric].notna()]
             
             if not valid_data.empty:
-                # 移除异常值（IQR 方法）
+
                 q1 = valid_data[metric].quantile(0.25)
                 q3 = valid_data[metric].quantile(0.75)
                 iqr = q3 - q1
@@ -818,7 +816,7 @@ def create_comparison_plot(metric, cluster):
             """
         )
     
-    # 绘图 DataFrame
+
     comparison_df = pd.DataFrame(plot_data, columns=['Model', metric])
     
     cluster_display = "All Clusters" if cluster == "All" else f"Cluster {cluster}"
@@ -910,22 +908,22 @@ footer = pn.pane.HTML(
 layout.append(footer)
 
 def create_app():
-    """创建Panel应用"""
+
     return layout
 
-# 使应用可服务
+
 layout.servable()
 
-# 本地运行时的入口点
+
 if __name__ == "__main__":
     print(f"Starting Panel server on port {PORT}")
     print(f"Loaded models: {successfully_loaded_models}")
     print(f"Available clusters: {metrics_cluster_options}")
     
-    # 确定允许的来源
+
     allowed_origins = [f"localhost:{PORT}"]
     
-    # 如果在云环境中，添加云域名
+
     if "RAILWAY_STATIC_URL" in os.environ:
         allowed_origins.append(os.environ["RAILWAY_STATIC_URL"])
     elif "RENDER_EXTERNAL_HOSTNAME" in os.environ:
