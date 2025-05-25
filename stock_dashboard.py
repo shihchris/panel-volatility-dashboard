@@ -104,7 +104,7 @@ model_files = {
     "AREWMA Model": "data/AREWMA_Model/predictions.csv",
     "LSTM+GARCH Hybrid Model": "data/Hybrid_Model/hybrid_predictions.csv",
     "EGARCH Model": "data/EGARCH/EGARCH_pred_true_records.csv",
-    "XGBoost Model": "data/XGBoost_Model/XGBoost_predictions.csv", 
+    "XGBoost Model": "data/XGBoost_Model/XGB_pred_true_records.csv", 
 }
 
 metrics_files = {
@@ -112,7 +112,7 @@ metrics_files = {
     "AREWMA Model": "data/AREWMA_Model/metrics.csv",
     "LSTM+GARCH Hybrid Model": "data/Hybrid_Model/hybrid_metrics.csv",
     "EGARCH Model": "data/EGARCH/EGARCH_new_weekly_metrics.csv",
-    "XGBoost Model": "data/XGBoost_Model/XGBoost_metrics.csv",
+    "XGBoost Model": "data/XGBoost_Model/XGB_weekly_metrics.csv",
 }
 mapping_file = "data/EGARCH/stock_week_cluster_mapping.csv"
 # 改进的错误处理
@@ -450,10 +450,29 @@ def make_plot(model, stock, week):
         {cluster_html}
     </div>
     """)
+    model_descriptions = {
+    "LSTM Model": "<strong>Features:</strong> <strong>LSTM</strong> is a <strong>deep learning model</strong> with strong fitting capability, capable of capturing long-term dependencies in time series.<br><strong>Limitations:</strong> It has slow training speed, is difficult to tune, and offers relatively low interpretability.",
+    
+    "AREWMA Model": "<strong>Features:</strong> <strong>AREWMA</strong> is a <strong>traditional statistical model</strong> with fast computation and low complexity. It produces relatively smooth and stepwise pattern predictions, as it employs a 30-minute sliding window for forecasting.<br><strong>Limitations:</strong> Due to its smoothing nature, the model tends to underrepresent extreme fluctuations and may fail to capture sharp spikes in volatility.",
+    
+    "LSTM+GARCH Hybrid Model": "<strong>Features:</strong> The <strong>Hybrid model</strong> combines the strengths of LSTM (for capturing nonlinear and long-term dependencies) and GARCH (for modeling volatility clustering and mean reversion).<br><strong>Limitations:</strong> Increased model complexity can lead to longer training times and tuning difficulties, and interpretability remains limited due to the deep learning component.",
+    
+    "EGARCH Model": "<strong>Features:</strong> <strong>EGARCH</strong> is a <strong>traditional econometric model</strong> specifically designed for volatility forecasting. It captures asymmetric effects and volatility clustering, and typically produces <strong>smooth</strong> outputs.<br><strong>Limitations:</strong> Although more flexible than standard GARCH, EGARCH predictions are often overly smooth and may fail to capture extreme values effectively.",
+    
+    "XGBoost Model": "<strong>Features:</strong> <strong>XGBoost</strong> is a <strong>tree-based ensemble machine learning model</strong> known for its high predictive accuracy and efficient training. It handles nonlinear patterns and interactions well.<br><strong>Limitations:</strong> It may overfit without proper regularization and does not inherently model time dependencies unless explicitly engineered into features."
+}
 
+    
+    model_desc_html = f"""
+    <div class='card' style='margin-top:15px; background-color:#f8f9fa;'>
+        <h4 style='color:#2c3e50; margin-bottom:10px;'>Model Description</h4>
+        <p style='color:#555;'>{model_descriptions.get(model, "No description available")}</p>
+    </div>
+    """
     return pn.Column(
         info_card,
         pn.pane.HoloViews(plot, sizing_mode="stretch_width"),
+        pn.pane.HTML(model_desc_html),  
         css_classes=['card']
     )
 
@@ -462,6 +481,7 @@ metrics_df_list = []
 for name, path in metrics_files.items():
     try:
         dfm = safe_read_csv(path, name)
+        
         if dfm is not None and not dfm.empty:
             if name == "AREWMA Model":
                 for col in dfm.columns:
@@ -469,8 +489,9 @@ for name, path in metrics_files.items():
                         dfm = dfm[dfm[col] == 'AR-EWMA']
                         break
             if name == "XGBoost Model":
+                dfm = dfm.rename(columns={"MAPE_pct": "MAPE(%)", "SMAPE": "SMAPE(%)"})
                 if 'model' in dfm.columns:
-                    dfm = dfm[dfm['model'] == 'XGB']
+                    dfm = dfm[dfm['model'] == 'XGBoost']
             dfm["model"] = name
             if 'stock_id' in dfm.columns and 'stock' not in dfm.columns:
                 dfm['stock'] = dfm['stock_id']
@@ -703,10 +724,145 @@ if not model_dfs:
         alert_type="danger",
         css_classes=['card']
     )
+metric_options = ["R2", "RMSE", "MAE", "MedAE", "MAPE(%)", "SMAPE(%)", "QLIKE"]
+comparison_metric_select = pn.widgets.Select(
+    name="Select Metric for Comparison",
+    options=metric_options,
+    value="MAE",
+    css_classes=['select-widget']
+)
+
+# 添加 cluster selector
+comparison_cluster_select = pn.widgets.Select(
+    name="Select Cluster",
+    options=["All"] + [str(c) for c in metrics_cluster_options],  # 加入“All”
+    value="All",
+    css_classes=['select-widget']
+)
+
+comparison_controls = pn.Column(
+    pn.pane.HTML("<h3>Cross-Model Performance Comparison</h3>"),
+    pn.Row(comparison_metric_select, comparison_cluster_select, align="center"),  # 横排布局
+    css_classes=['card']
+)
+
+
+@pn.depends(metric=comparison_metric_select.param.value, cluster=comparison_cluster_select.param.value)
+def create_comparison_plot(metric, cluster):
+    if all_metrics_df.empty or map_df.empty:
+        return pn.pane.HTML(
+            """
+            <div class="card" style="text-align:center; padding:40px;">
+                <h3 style="color:#7f8c8d;">No metrics or mapping data available for comparison.</h3>
+            </div>
+            """
+        )
+    
+    # 收集所有模型的数据
+    plot_data = []
+    available_models = []
+    
+    # 获取所选 cluster 的 stock-week 对
+    if cluster == "All":
+        valid_pairs = set(zip(all_metrics_df['stock'], all_metrics_df['week']))
+    else:
+        try:
+            cluster_int = int(cluster)
+            sel = map_df[map_df.cluster == cluster_int]
+            if sel.empty:
+                return pn.pane.HTML(
+                    f"""
+                    <div class="card" style="text-align:center; padding:40px;">
+                        <h3 style="color:#7f8c8d;">No data available for cluster {cluster}.</h3>
+                    </div>
+                    """
+                )
+            valid_pairs = set(zip(sel['stock'], sel['week']))
+        except (ValueError, TypeError):
+            return pn.pane.HTML(
+                """
+                <div class="card" style="text-align:center; padding:40px;">
+                    <h3 style="color:#7f8c8d;">Invalid cluster selection.</h3>
+                </div>
+                """
+            )
+    
+    for model_name in successfully_loaded_models:
+        model_data = all_metrics_df[all_metrics_df['model'] == model_name]
+        
+        if not model_data.empty and metric in model_data.columns:
+            # 按 cluster 筛选 stock-week 对
+            model_data = model_data[model_data[["stock", "week"]].apply(tuple, axis=1).isin(valid_pairs)]
+            valid_data = model_data[model_data[metric].notna()]
+            
+            if not valid_data.empty:
+                # 移除异常值（IQR 方法）
+                q1 = valid_data[metric].quantile(0.25)
+                q3 = valid_data[metric].quantile(0.75)
+                iqr = q3 - q1
+                upper = q3 + 1.5 * iqr
+                lower = q1 - 1.5 * iqr
+                clean_data = valid_data[(valid_data[metric] <= upper) & (valid_data[metric] >= lower)]
+                
+                if not clean_data.empty:
+                    plot_data.extend([(model_name, val) for val in clean_data[metric].values])
+                    available_models.append(model_name)
+    
+    if not plot_data:
+        cluster_display = "All Clusters" if cluster == "All" else f"Cluster {cluster}"
+        return pn.pane.HTML(
+            f"""
+            <div class="card" style="text-align:center; padding:40px;">
+                <h3 style="color:#7f8c8d;">No data available for {metric} in {cluster_display}.</h3>
+            </div>
+            """
+        )
+    
+    # 绘图 DataFrame
+    comparison_df = pd.DataFrame(plot_data, columns=['Model', metric])
+    
+    cluster_display = "All Clusters" if cluster == "All" else f"Cluster {cluster}"
+    box_plot = comparison_df.hvplot.box(
+        y=metric,
+        by='Model',
+        title=f'{metric} Comparison Across Models ({cluster_display})',
+        height=600,
+        width=500,
+        ylabel=metric,
+        xlabel='Model',
+        rot=15
+    ).opts(
+        box_fill_color="#e3f2fd",
+        box_line_color="#1976d2",
+        whisker_line_color="#1976d2",
+        outlier_fill_color="#ff5722",
+        outlier_line_color="#ff5722",
+        tools=['hover', 'box_zoom', 'reset'],
+        active_tools=[],
+        fontscale=1.2,
+        bgcolor='white',
+        show_grid=True
+    )
+    
+    info_text = f"""
+    <div style='margin-top:20px; text-align:center;'>
+        <p style='color:#7f8c8d;'>
+            Showing {metric} comparison for {len(available_models)} models in {cluster_display}: 
+            {', '.join(available_models)}
+        </p>
+    </div>
+    """
+    
+    return pn.Column(
+        pn.pane.HoloViews(box_plot, sizing_mode="stretch_width"),
+        pn.pane.HTML(info_text),
+        css_classes=['card']
+    )
 
 tabs = pn.Tabs(
     ("Forecast Chart", pn.Column(controls, make_plot, sizing_mode="stretch_width")),
     ("Model Metrics", pn.Column(metrics_controls, metrics_display_area, sizing_mode="stretch_width")),
+    ("Model Performance Comparison", pn.Column(comparison_controls, create_comparison_plot, sizing_mode="stretch_width")),  # 新增这一行
     css_classes=['tabs']
 )
 
